@@ -6,7 +6,6 @@ package com.carriez.flutter_hbb
  * Inspired by [droidVNC-NG] https://github.com/bk138/droidVNC-NG
  */
 
-import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Build
@@ -15,7 +14,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.EditText
-import android.view.accessibility.AccessibilityEvent
 import android.view.ViewGroup.LayoutParams
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.KeyEvent as KeyEventAndroid
@@ -33,6 +31,16 @@ import kotlin.math.max
 import hbb.MessageOuterClass.KeyEvent
 import hbb.MessageOuterClass.KeyboardMode
 import hbb.KeyEventConverter
+import android.accessibilityservice.AccessibilityService
+import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.view.LayoutInflater
+import android.view.View
+import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 
 const val LIFT_DOWN = 9
 const val LIFT_MOVE = 8
@@ -60,6 +68,24 @@ class InputService : AccessibilityService() {
         var ctx: InputService? = null
         val isOpen: Boolean
             get() = ctx != null
+    }
+
+    private lateinit var windowManager: WindowManager
+    private lateinit var overlayView: View
+
+    private val receiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "CALL_ACCESSIBILITY_METHOD") {
+                // 调用 AccessibilityService 中的方法
+                val result = intent?.getBooleanExtra("showBlackScreen", false)
+                    ?.let { someMethodInAccessibilityService(it) }
+                // 发送结果回普通 Service
+                val replyIntent = Intent("ACCESSIBILITY_METHOD_RESULT").apply {
+                    putExtra("result", result)
+                }
+                sendBroadcast(replyIntent)
+            }
+        }
     }
 
     private val logTag = "input service"
@@ -596,6 +622,7 @@ class InputService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onServiceConnected() {
         super.onServiceConnected()
         ctx = this
@@ -613,6 +640,34 @@ class InputService : AccessibilityService() {
         val layout = fakeEditTextForTextStateCalculation?.getLayout()
         Log.d(logTag, "fakeEditTextForTextStateCalculation layout:$layout")
         Log.d(logTag, "onServiceConnected!")
+
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        overlayView = LayoutInflater.from(this).inflate(R.layout.float_layer, null)
+        // 注册广播接收器
+        val filter = IntentFilter("CALL_ACCESSIBILITY_METHOD")
+        registerReceiver(receiver, filter)
+    }
+
+    private fun someMethodInAccessibilityService(showBlackScreen: Boolean): String {
+        if (showBlackScreen)
+            initOverlay()
+        else overlayView?.let { windowManager.removeView(it) }
+        return "true"
+    }
+
+    fun initOverlay() {
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, // 使用无障碍悬浮窗类型
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            android.graphics.PixelFormat.TRANSLUCENT
+        )
+        params.screenBrightness = 0.0f
+
+        // 添加悬浮窗到桌面
+        windowManager.addView(overlayView, params)
+        overlayView.bringToFront()
     }
 
     override fun onDestroy() {
